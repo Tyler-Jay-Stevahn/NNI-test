@@ -1,0 +1,15 @@
+[Unit]
+Description=NNI-Test Dashboard (stdlib http.server, port 6123)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/NNI-Test
+# Pure-stdlib Python server. No venv needed.
+ExecStart=%h/NNI-Test/.venv/bin/python %h/NNI-Test/webui/app.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

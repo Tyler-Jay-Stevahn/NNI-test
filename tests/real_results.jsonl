@@ -1,0 +1,1 @@
+{"id": "Tquant-int8-M05", "declared_dataset": "cifar100", "status": "ok", "val_acc": 0.01, "train_loss": 4.6215, "val_loss": 4.6157, "inference_ms": 1.1869, "param_count": 65636, "above_chance": false}

@@ -1,0 +1,8 @@
+# datasets are large/binary — never commit them
+.venv/
+.data/
+data/
+__pycache__/
+*.pyc
+pipeline_smoke_results.jsonl
+*.log

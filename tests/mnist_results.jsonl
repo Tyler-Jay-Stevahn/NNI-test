@@ -1,0 +1,5 @@
+{"id": "Thpo-mnist-M01", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.337, "train_loss": 2.2168, "val_loss": 2.1522, "inference_ms": 0.0894, "param_count": 25450, "above_chance": true}
+{"id": "Thpo-mnist-M02", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.583, "train_loss": 2.2352, "val_loss": 2.1527, "inference_ms": 0.0892, "param_count": 50890, "above_chance": true}
+{"id": "Thpo-mnist-M03", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.486, "train_loss": 2.2061, "val_loss": 2.1294, "inference_ms": 0.0898, "param_count": 101770, "above_chance": true}
+{"id": "Thpo-mnist-M04", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.502, "train_loss": 2.216, "val_loss": 2.1412, "inference_ms": 0.0906, "param_count": 203530, "above_chance": true}
+{"id": "Thpo-mnist-M05", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.634, "train_loss": 2.1858, "val_loss": 2.0943, "inference_ms": 0.0937, "param_count": 407050, "above_chance": true}
