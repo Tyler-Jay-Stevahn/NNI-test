@@ -47,6 +47,35 @@ TASK_FAMILIES = {
         "epochs": 20,
         "augmentation": "none",
     },
+    "lenet-mnist": {
+        # The ORIGINAL MNIST model architecture: LeNet-5 (LeCun et al. 1998).
+        # This is a FIXED multi-layer architecture, not a width-variant family,
+        # so the generator emits exactly ONE proposal (no width broadcast).
+        "fixed": True,
+        "model": "lenet5",
+        "dataset": "mnist",
+        "blocks": [
+            {"type": "conv", "channels": 6, "kernel": 5, "stride": 1},
+            {"type": "relu"},
+            {"type": "avgpool2d", "kernel": 2, "stride": 2},
+            {"type": "conv", "channels": 16, "kernel": 5, "stride": 1},
+            {"type": "relu"},
+            {"type": "avgpool2d", "kernel": 2, "stride": 2},
+            {"type": "conv", "channels": 120, "kernel": 5, "stride": 1},
+            {"type": "relu"},
+            {"type": "flatten"},
+            {"type": "linear", "units": 84},
+            {"type": "relu"},
+            {"type": "linear", "units": 10},
+        ],
+        "head": "logits",
+        "optimizer": "sgd",
+        "lr_grid": [0.001, 0.005, 0.01, 0.05, 0.1],
+        "weight_decay_grid": [0.0, 1e-4, 1e-3],
+        "batch_size": 128,
+        "epochs": 20,
+        "augmentation": "none",
+    },
     "nas-cifar": {
         "model": "cell_cnn",
         "dataset": "cifar10",
@@ -313,6 +342,13 @@ RATIONALE = {
         "effects from architecture effects, so tuning lr and weight_decay here "
         "gives a clean read on the search algorithm itself."
     ),
+    "lenet-mnist": (
+        "LeNet-5 is the original convolutional architecture trained on MNIST "
+        "(LeCun et al. 1998). It anchors the conv benchmark: two conv+pool "
+        "stages, a conv collapse to 120 maps, then two dense layers (84 then "
+        "10). It is the reference convolutional baseline the NNI search spaces "
+        "are measured against, so it belongs in the MNIST proposals verbatim."
+    ),
     "nas-cifar": (
         "Cell-based CNN on CIFAR-10 is the canonical NAS benchmark. A small "
         "conv stack keeps search cheap while remaining representative of the "
@@ -404,6 +440,20 @@ CITATIONS = {
         {"title": "LeCun et al. (1998) Gradient-Based Learning Applied to Document Recognition (LeNet/MNIST)",
          "url": "https://doi.org/10.1109/5.726791",
          "why": "Origin of the MNIST benchmark used here."},
+        {"title": "Microsoft NNI toolkit (GitHub)",
+         "url": "https://github.com/microsoft/nni",
+         "why": "The AutoML framework this proposal targets."},
+    ],
+    "lenet-mnist": [
+        {"title": "LeCun et al. (1998) Gradient-Based Learning Applied to Document Recognition (LeNet/MNIST)",
+         "url": "https://doi.org/10.1109/5.726791",
+         "why": "The original LeNet-5 architecture trained on MNIST; the design replicated here."},
+        {"title": "LeCun et al. (1998) The MNIST Database of Handwritten Digits",
+         "url": "http://yann.lecun.com/exdb/mnist/",
+         "why": "The handwriting dataset LeNet-5 was built for; still the canonical small-image baseline."},
+        {"title": "Bengio et al. (2012) Practical Recommendations for Gradient-Based Training (convnet chapter)",
+         "url": "https://arxiv.org/abs/1206.5533",
+         "why": "Standard reference on conv+pool+ReLU stacks validating the LeNet design choices."},
         {"title": "Microsoft NNI toolkit (GitHub)",
          "url": "https://github.com/microsoft/nni",
          "why": "The AutoML framework this proposal targets."},
@@ -606,8 +656,10 @@ CITATIONS = {
 }
 
 
-def build_rationale(fam: str, idx: int, spec: dict) -> str:
+def build_rationale(fam: str, idx: int, spec: dict, fixed: bool = False) -> str:
     base = RATIONALE.get(fam, "Proposed as part of the NNI experiment sweep.")
+    if fixed:
+        return base
     width = WIDTH_GRID[idx % len(WIDTH_GRID)]
     variant = (
         f" Variant M{idx + 1:02d} uses layer width {width} "
@@ -652,21 +704,30 @@ def _size_field(btype: str):
 
 
 def build_spec(fam: str, idx: int, template: dict) -> dict:
-    """Build a spec. Each variant gets a DISTINCT layer width from WIDTH_GRID
-    (e.g. a dense layer of 32 vs 64 vs ...), so M01..M05 are separate models
-    distinguished by their LAYER DIMENSIONS — not by any training setting.
+    """Build a spec.
+
+    Width-variant families: each variant gets a DISTINCT layer width from
+    WIDTH_GRID (e.g. a dense layer of 32 vs 64 vs ...), so M01..M05 are
+    separate models distinguished by their LAYER DIMENSIONS — not by any
+    training setting.
+
+    Fixed families (template has `fixed: True`): the authored block widths are
+    preserved EXACTLY (no width broadcast), so a fixed architecture such as
+    LeNet-5 is emitted verbatim as a single proposal.
+
     Training hyperparameters are deliberately NOT emitted (they are not part of
     the model)."""
     import copy
 
     blocks = copy.deepcopy(template["blocks"])
-    width = WIDTH_GRID[idx % len(WIDTH_GRID)]
-    for b in blocks:
-        fld = _size_field(b.get("type", ""))
-        if fld and fld in b:
-            b[fld] = width
-        elif b.get("novel") and "modes" in b:
-            b["modes"] = width          # novel spectral layer: spectral mode count
+    if not template.get("fixed"):
+        width = WIDTH_GRID[idx % len(WIDTH_GRID)]
+        for b in blocks:
+            fld = _size_field(b.get("type", ""))
+            if fld and fld in b:
+                b[fld] = width
+            elif b.get("novel") and "modes" in b:
+                b["modes"] = width          # novel spectral layer: spectral mode count
 
     spec = {
         "model": template["model"],
@@ -716,10 +777,12 @@ def main() -> int:
     rows = []
     seen_keys = {}  # uniqueness key -> id, to enforce "not already proposed"
     for fam, tmpl in TASK_FAMILIES.items():
-        for i in range(MODELS_PER_FAMILY):
+        fixed = bool(tmpl.get("fixed"))
+        n_var = 1 if fixed else MODELS_PER_FAMILY
+        for i in range(n_var):
             nn = f"{i + 1:02d}"
             pid = f"T{fam}-M{nn}"
-            status = STATUS_CYCLE[i % len(STATUS_CYCLE)]
+            status = "proposed" if fixed else STATUS_CYCLE[i % len(STATUS_CYCLE)]
             spec = build_spec(fam, i, tmpl)
             # uniqueness requirement: same model allowed for a different task OR
             # with different layer dimensions. Duplicate only if task + layer
@@ -739,7 +802,7 @@ def main() -> int:
                 "status": status,
                 "created": CREATED,
                 "parent": None if i == 0 else f"T{fam}-M{(i):02d}",
-                "rationale": build_rationale(fam, i, spec),
+                "rationale": build_rationale(fam, i, spec, fixed=fixed),
                 "citations": CITATIONS.get(fam, []),
                 "compile_status": "untested",  # filled by pipeline/smoke_test.py
                 "spec": spec,

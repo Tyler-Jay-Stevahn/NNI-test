@@ -98,6 +98,13 @@ class SwapTimeChannel(nn.Module):
         return x.transpose(1, 2)
 
 
+class _Flatten(nn.Module):
+    """Flatten all dims except batch, preserving (B, -1)."""
+
+    def forward(self, x):
+        return x.flatten(1)
+
+
 class RecurrentSeq(nn.Module):
     """GRU/LSTM over (B, C, T); returns (B, H, T) so 1-D blocks may follow."""
 
@@ -224,6 +231,10 @@ def _block(block: dict, in_ch: int):
         return nn.ReLU(), in_ch
     if t == "maxpool2d":
         return nn.MaxPool2d(block.get("kernel", 2), block.get("stride", 2)), in_ch
+    if t == "avgpool2d":
+        return nn.AvgPool2d(block.get("kernel", 2), block.get("stride", 2)), in_ch
+    if t == "flatten":
+        return _Flatten(), in_ch
     if t == "boosted_trees":
         return nn.Identity(), in_ch
     if t == "choice":
@@ -345,6 +356,26 @@ def build_model(spec: dict) -> nn.Module:
         return nn.Sequential(nn.Flatten(),
                              nn.Linear(in_ch * h * w, units),
                              nn.ReLU(), nn.Linear(units, nc))
+    if mod == "image" and model_name == "lenet5":
+        # Faithful LeNet-5 conv trunk (LeCun et al. 1998): conv6 -> pool ->
+        # conv16 -> pool -> conv120 -> flatten -> dense84 -> dense10. Convs use
+        # padding=kernel//2 (the same convention this builder's generic conv
+        # path uses) so the trunk is shape-safe on the 28x28 MNIST tensor while
+        # keeping the original channel counts (6/16/120) and widths (84/10).
+        trunk = nn.Sequential(
+            nn.Conv2d(shape[0], 6, 5, padding=2), nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(6, 16, 5, padding=2), nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(16, 120, 5, padding=2), nn.ReLU(),
+            nn.Flatten(),
+        )
+        trunk.eval()
+        with torch.no_grad():
+            fdim = trunk(torch.randn(1, *shape)).shape[1]
+        return nn.Sequential(trunk,
+                             nn.Linear(fdim, 84), nn.ReLU(),
+                             nn.Linear(84, nc))
     if mod == "image" and model_name == "gbm":
         in_ch, h, w = shape
         return nn.Sequential(nn.Flatten(), nn.Linear(in_ch * h * w, nc))
