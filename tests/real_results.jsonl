@@ -1,1 +1,2 @@
 {"id": "Tquant-int8-M05", "declared_dataset": "cifar100", "status": "ok", "val_acc": 0.01, "train_loss": 4.6215, "val_loss": 4.6157, "inference_ms": 1.1869, "param_count": 65636, "above_chance": false}
+{"id": "Tlenet-mnist-M01", "declared_dataset": "mnist", "status": "ok", "val_acc": 0.9925, "train_loss": 0.0011, "val_loss": 0.0275, "inference_ms": 0.2098, "param_count": 545546, "above_chance": true}
