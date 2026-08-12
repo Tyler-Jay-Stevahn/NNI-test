@@ -1038,7 +1038,9 @@ TASK_DESC = {
     "text-cnn-news": "News snippets written as text, each labeled with a topic. A multi-class "
                      "text-topic task over word sequences.",
     "timeseries-har": "Multichannel sensor recordings of body motion over time, each labeled "
-                      "with an activity. A human-activity-recognition time-series task.",
+                     "with an activity. A human-activity-recognition time-series task.",
+    "lenet-mnist": "Handwritten digits (0-9) in 28x28 pixel grayscale images, sorted into 10 "
+                   "categories. A small image-classification task.",
 }
 
 
