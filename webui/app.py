@@ -898,28 +898,58 @@ def page_family(fam):
                 return str(v)
         return None
 
-    # one enriched row per proposal (carry smoke params for the chart)
+    # one enriched row per proposal: proposal fields + its real-data result
+    # joined in. All families run through the same runner (tests/
+    # run_proposal_tests.py / test_real.py), so run constants are identical
+    # across families: SGD lr=1e-2, 3 epochs, 600 train / 200 val samples.
     rows = []
     for p in fps:
         row = dict(p)
-        row["_smoke"] = smoke.get(p.get("id"))
+        row["_real"] = real.get(p.get("id")) or {}
+        row["_smoke"] = smoke.get(p.get("id")) or {}
         rows.append(row)
 
+    def val_acc(p):
+        return p.get("_real", {}).get("val_acc")
+    def train_loss(p):
+        return p.get("_real", {}).get("train_loss")
+    def val_loss(p):
+        return p.get("_real", {}).get("val_loss")
+    def infer_ms(p):
+        return p.get("_real", {}).get("inference_ms")
+    def param_count(p):
+        pc = p.get("_real", {}).get("param_count")
+        if pc is not None:
+            return pc
+        return p.get("_smoke", {}).get("params")
+
+    # Same column shape as page_mnist so every family page reads the same way:
+    # run-constants (fixed by the shared runner) then measured metrics, plus
+    # architecture-choice columns pulled from each proposal's spec.
     dims = [
-        ("head", "head", lambda p: (p.get("spec") or {}).get("head")),
-        ("layer type", "layer type", lambda p: first_btype(p.get("spec"))),
-        ("first units", "first units", lambda p: first_units(p.get("spec"))),
-        ("layers", "layers", lambda p: n_blocks(p.get("spec"))),
-        ("params", "params", lambda p: (p.get("_smoke") or {}).get("params")),
-        ("status", "status", lambda p: p.get("status")),
-        ("task family", "task family", lambda p: p.get("task_family")),
-        ("tuning", "tuning", lambda p: tuning(p.get("spec"))),
+        ("epochs",       "epochs",       lambda p: 3),
+        ("first units",  "first units",  lambda p: first_units(p.get("spec"))),
+        ("layer type",   "layer type",   lambda p: first_btype(p.get("spec"))),
+        ("layers",       "layers",       lambda p: n_blocks(p.get("spec"))),
+        ("learning rate","learning rate",lambda p: 0.01),
+        ("optimizer",    "optimizer",    lambda p: "SGD"),
+        ("train samples","train samples", lambda p: 600),
+        ("val accuracy", "val accuracy", val_acc),
+        ("val samples",  "val samples",  lambda p: 200),
+        ("parameter count","parameter count", param_count),
+        ("train loss",   "train loss",   train_loss),
+        ("val loss",     "val loss",     val_loss),
+        ("inference time (ms)", "inference time (ms)", infer_ms),
+        ("tuning",       "tuning",       lambda p: tuning(p.get("spec"))),
     ]
+    fixed_max = {"epochs": 3, "learning rate": 0.01, "train samples": 600,
+                 "val accuracy": 1.0, "val samples": 200}
     chart, vlegend, catlegend = pcoord_chart(
-        rows, dims, col_w=90,
-        note="One line per proposal in this family; columns are the architecture "
-             "choices pulled live from each proposal's spec. 'params' from the "
-             "smoke test. Source: proposals.jsonl + pipeline_smoke_results.jsonl.",
+        rows, dims, fixed_max=fixed_max, col_w=90, color_by=lambda p: "#3fb950",
+        note="One line per proposal in this family; columns are the run "
+             "constants (SGD, 3 epochs, 600/200 split — shared by the real-data "
+             "runner) plus measured metrics and architecture choices pulled "
+             "from each proposal's spec. Source: proposals.jsonl + tests/results.jsonl.",
     )
 
     body = (
