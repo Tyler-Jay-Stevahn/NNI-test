@@ -910,7 +910,14 @@ def family_table(fps, smoke, real):
         pid = esc(p.get("id"))
         sm = smoke.get(p.get("id")) or {}
         rl = real.get(p.get("id")) or {}
-        ds = sm.get("modality")
+        # actual dataset name: prefer the real-data result's declared_dataset
+        # (matches /mnist), fall back to the proposal's spec.dataset, then the
+        # smoke modality. Previously read sm.get("modality") which is the data
+        # MODALITY (image/text/timeseries), not the dataset NAME — so every
+        # family table showed "image" instead of "cifar10" etc.
+        ds = (rl.get("declared_dataset")
+              or (p.get("spec") or {}).get("dataset")
+              or sm.get("modality") or "")
         # prefer real results, fall back to smoke
         val_acc = rl.get("val_acc")
         params = rl.get("param_count") if rl.get("param_count") is not None else sm.get("params")
