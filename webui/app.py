@@ -184,7 +184,6 @@ def build_nav():
         ("/verification", "Verification"),
         ("/smoke", "Smoke Tests"),
         ("/models", "All models"),
-        ("/lenet", "LeNet bench"),
     ]
     items = "".join(f"<a href='{href}'>{esc(label)}</a>"
                     for href, label in base_links)
