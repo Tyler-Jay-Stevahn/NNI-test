@@ -184,6 +184,7 @@ def build_nav():
         ("/verification", "Verification"),
         ("/smoke", "Smoke Tests"),
         ("/models", "All models"),
+        ("/lenet", "LeNet bench"),
     ]
     items = "".join(f"<a href='{href}'>{esc(label)}</a>"
                     for href, label in base_links)
@@ -385,7 +386,7 @@ def page_index():
     proposals = load_jsonl("proposals.jsonl")
     verify = load_jsonl("proposals_verification.jsonl")
     smoke = load_jsonl("pipeline_smoke_results.jsonl")
-    mnist = load_jsonl("tests/mnist_results.jsonl")
+    mnist = [r for r in load_jsonl("tests/results.jsonl") if r.get("declared_dataset") == "mnist"]
 
     fams = sorted({p.get("task_family") for p in proposals})
     v_ok = sum(1 for v in verify if (v.get("status") or "").lower() == "ok")
@@ -595,7 +596,8 @@ def page_smoke():
 
 
 def page_mnist():
-    mnist = load_jsonl("tests/mnist_results.jsonl")
+    allreal = load_jsonl("tests/results.jsonl")
+    mnist = [r for r in allreal if r.get("declared_dataset") == "mnist"]
     proposals = index_by(load_jsonl("proposals.jsonl"), "id")
 
     # Parallel-coordinates line chart: one vertical column per category
@@ -679,9 +681,11 @@ def page_mnist():
     rows = []
     for m in mnist:
         pid = esc(m.get("id"))
+        p = proposals.get(m.get("id")) or {}
+        fam = esc(p.get("task_family") or "hpo-mnist")
         rows.append(
             f"<tr><td><a href='/proposal/{pid}'>{pid}</a></td>"
-            f"<td>hpo-mnist</td>"
+            f"<td>{fam}</td>"
             f"<td>{esc(m.get('declared_dataset'))}</td>"
             f"<td>{badge(m.get('status'))}</td>"
             f"<td>{esc(m.get('val_acc'))}</td>"
@@ -707,13 +711,75 @@ def page_mnist():
     return "MNIST", body
 
 
+def page_lenet():
+    results = load_jsonl("tests/lenet_bench.jsonl")
+    status = {}
+    sp = os.path.join(ROOT, "tests", "lenet_bench_status.json")
+    if os.path.exists(sp):
+        try:
+            status = json.load(open(sp))
+        except Exception:
+            status = {}
+
+    stage = status.get("stage", "idle")
+    cur = status.get("current")
+    ep = status.get("epoch")
+    total = status.get("total_epochs")
+    mtot = status.get("models_total")
+    mdone = status.get("models_done") or []
+    elapsed = status.get("elapsed_s")
+    train_acc = status.get("train_acc")
+    val_acc = status.get("val_acc")
+    if stage == "running":
+        prog = ("<b style='color:var(--accent)'>RUNNING</b> &middot; "
+                "model " + str(len(mdone) + 1) + "/" + str(mtot)
+                + " &middot; current: <code>" + esc(cur) + "</code> &middot; epoch "
+                + str(ep) + "/" + str(total))
+        if train_acc is not None:
+            prog += (" &middot; train_acc=" + str(train_acc) + " val_acc="
+                     + str(val_acc) + " &middot; elapsed " + str(elapsed) + "s")
+    elif stage == "done":
+        prog = ("<b style='color:var(--ok)'>DONE</b> &middot; "
+                + str(mtot) + " models benchmarked &middot; finished "
+                + esc(status.get("finished", "")))
+    else:
+        prog = "<span class='muted'>idle</span>"
+    banner = ("<div class='desc' style='border-left-color:var(--ok)'>"
+              + prog
+              + "<br><span class='muted' style='font-size:12px'>"
+              "Protocol: LeCun-clean regime -- full 60k train / 10k test, no augmentation, "
+              "SGD lr=0.05 momentum=0.9, batch=64, per-pixel normalization, 20 epochs. "
+              "Refresh the page to poll; /api/lenet returns live status.</span></div>")
+
+    rows = []
+    for r in sorted(results, key=lambda x: -(x.get("final_val_acc") or 0)):
+        rid = esc(r.get("id"))
+        rows.append(
+            "<tr><td>" + rid + "</td>"
+            "<td>" + esc(r.get("kind")) + "</td>"
+            "<td>" + esc(r.get("input")) + "</td>"
+            "<td>" + esc(r.get("n_params")) + "</td>"
+            "<td><b style='color:var(--ok)'>" + esc(r.get("final_val_acc")) + "</b></td>"
+            "<td>" + esc(r.get("final_val_loss")) + "</td>"
+            "<td>" + esc(r.get("inference_ms")) + "</td>"
+            "<td>" + esc(r.get("seconds")) + "</td></tr>"
+        )
+    table = ("<table><thead><tr><th>ID</th><th>Kind</th><th>Input</th>"
+             "<th>Params</th><th>Final val acc</th><th>Val loss</th>"
+             "<th>Infer ms</th><th>Seconds</th></tr></thead><tbody>"
+             + "".join(rows) + "</tbody></table>") if rows else ""
+
+    body = ("<h2>LeNet-5 / MNIST full-data benchmark</h2>" + banner
+            + "<h2>Results (final test accuracy)</h2>" + table)
+    return "LeNet benchmark", body
+
+
 def page_models():
     """All proposals on one parallel-coordinates chart, coloured by model.
     A dropdown filters the chart to a single model (client-side)."""
     proposals = load_jsonl("proposals.jsonl")
     smoke = index_by(load_jsonl("pipeline_smoke_results.jsonl"), "id")
-    real = index_by(load_jsonl("tests/real_results.jsonl"), "id")
-    mnist = index_by(load_jsonl("tests/mnist_results.jsonl"), "id")
+    real = index_by(load_jsonl("tests/results.jsonl"), "id")
 
     def model_of(p):
         return (p.get("spec") or {}).get("model") or "unknown"
@@ -731,8 +797,7 @@ def page_models():
 
     def valacc_of(p):
         rl = real.get(p.get("id")) or {}
-        mn = mnist.get(p.get("id")) or {}
-        return rl.get("val_acc") if rl.get("val_acc") is not None else mn.get("val_acc")
+        return rl.get("val_acc")
 
     rows = [{
         "id": p.get("id"),
@@ -796,7 +861,7 @@ def page_family(fam):
     if not fps:
         return "Not found", f"<h2>404</h2><p class='muted'>family {esc(fam)} not found</p>"
     smoke = index_by(load_jsonl("pipeline_smoke_results.jsonl"), "id")
-    real = index_by(load_jsonl("tests/real_results.jsonl"), "id")
+    real = index_by(load_jsonl("tests/results.jsonl"), "id")
 
     desc = TASK_DESC.get(fam, "")
 
@@ -870,7 +935,7 @@ def family_table(fps, smoke, real):
     """Replicates the MNIST raw-data table layout exactly:
     ID, Family, Dataset, Status, Val acc, Params, Train loss, Val loss,
     Infer ms, Above chance. For proposals that were real-data tested, the
-    metrics come from tests/real_results.jsonl (val_acc, train_loss, val_loss,
+    metrics come from tests/results.jsonl (val_acc, train_loss, val_loss,
     inference_ms, param_count, above_chance). Untested (proposed) rows show
     only what the smoke compile-gate produced (params) and leave the rest
     blank."""
@@ -983,6 +1048,19 @@ class Handler(BaseHTTPRequestHandler):
                 title, body = page_models()
             elif path == "/mnist":
                 title, body = page_mnist()
+            elif path == "/lenet":
+                title, body = page_lenet()
+            elif path == "/api/lenet":
+                out = {"results": load_jsonl("tests/lenet_bench.jsonl"),
+                       "status": {}}
+                sp = os.path.join(ROOT, "tests", "lenet_bench_status.json")
+                if os.path.exists(sp):
+                    try:
+                        out["status"] = json.load(open(sp))
+                    except Exception:
+                        pass
+                self._json(out)
+                return
             elif path.startswith("/family/"):
                 fam = path.split("/family/", 1)[1].strip("/")
                 res = page_family(fam)
