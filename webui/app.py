@@ -710,69 +710,6 @@ def page_mnist():
     return "MNIST", body
 
 
-def page_lenet():
-    results = load_jsonl("tests/lenet_bench.jsonl")
-    status = {}
-    sp = os.path.join(ROOT, "tests", "lenet_bench_status.json")
-    if os.path.exists(sp):
-        try:
-            status = json.load(open(sp))
-        except Exception:
-            status = {}
-
-    stage = status.get("stage", "idle")
-    cur = status.get("current")
-    ep = status.get("epoch")
-    total = status.get("total_epochs")
-    mtot = status.get("models_total")
-    mdone = status.get("models_done") or []
-    elapsed = status.get("elapsed_s")
-    train_acc = status.get("train_acc")
-    val_acc = status.get("val_acc")
-    if stage == "running":
-        prog = ("<b style='color:var(--accent)'>RUNNING</b> &middot; "
-                "model " + str(len(mdone) + 1) + "/" + str(mtot)
-                + " &middot; current: <code>" + esc(cur) + "</code> &middot; epoch "
-                + str(ep) + "/" + str(total))
-        if train_acc is not None:
-            prog += (" &middot; train_acc=" + str(train_acc) + " val_acc="
-                     + str(val_acc) + " &middot; elapsed " + str(elapsed) + "s")
-    elif stage == "done":
-        prog = ("<b style='color:var(--ok)'>DONE</b> &middot; "
-                + str(mtot) + " models benchmarked &middot; finished "
-                + esc(status.get("finished", "")))
-    else:
-        prog = "<span class='muted'>idle</span>"
-    banner = ("<div class='desc' style='border-left-color:var(--ok)'>"
-              + prog
-              + "<br><span class='muted' style='font-size:12px'>"
-              "Protocol: LeCun-clean regime -- full 60k train / 10k test, no augmentation, "
-              "SGD lr=0.05 momentum=0.9, batch=64, per-pixel normalization, 20 epochs. "
-              "Refresh the page to poll; /api/lenet returns live status.</span></div>")
-
-    rows = []
-    for r in sorted(results, key=lambda x: -(x.get("final_val_acc") or 0)):
-        rid = esc(r.get("id"))
-        rows.append(
-            "<tr><td>" + rid + "</td>"
-            "<td>" + esc(r.get("kind")) + "</td>"
-            "<td>" + esc(r.get("input")) + "</td>"
-            "<td>" + esc(r.get("n_params")) + "</td>"
-            "<td><b style='color:var(--ok)'>" + esc(r.get("final_val_acc")) + "</b></td>"
-            "<td>" + esc(r.get("final_val_loss")) + "</td>"
-            "<td>" + esc(r.get("inference_ms")) + "</td>"
-            "<td>" + esc(r.get("seconds")) + "</td></tr>"
-        )
-    table = ("<table><thead><tr><th>ID</th><th>Kind</th><th>Input</th>"
-             "<th>Params</th><th>Final val acc</th><th>Val loss</th>"
-             "<th>Infer ms</th><th>Seconds</th></tr></thead><tbody>"
-             + "".join(rows) + "</tbody></table>") if rows else ""
-
-    body = ("<h2>LeNet-5 / MNIST full-data benchmark</h2>" + banner
-            + "<h2>Results (final test accuracy)</h2>" + table)
-    return "LeNet benchmark", body
-
-
 def page_models():
     """All proposals on one parallel-coordinates chart, coloured by model.
     A dropdown filters the chart to a single model (client-side)."""
@@ -1079,19 +1016,6 @@ class Handler(BaseHTTPRequestHandler):
                 title, body = page_models()
             elif path == "/mnist":
                 title, body = page_mnist()
-            elif path == "/lenet":
-                title, body = page_lenet()
-            elif path == "/api/lenet":
-                out = {"results": load_jsonl("tests/lenet_bench.jsonl"),
-                       "status": {}}
-                sp = os.path.join(ROOT, "tests", "lenet_bench_status.json")
-                if os.path.exists(sp):
-                    try:
-                        out["status"] = json.load(open(sp))
-                    except Exception:
-                        pass
-                self._json(out)
-                return
             elif path.startswith("/family/"):
                 fam = path.split("/family/", 1)[1].strip("/")
                 res = page_family(fam)
