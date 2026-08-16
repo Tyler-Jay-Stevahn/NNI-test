@@ -31,8 +31,28 @@ PORT = 6123
 # Data loaders
 # ---------------------------------------------------------------------------
 def load_jsonl(name):
-    path = os.path.join(ROOT, name)
-    if not os.path.exists(path):
+    # Resolve a JSONL path relative to ROOT, but tolerate common layout
+    # variants so the dashboard works even if a file was placed in a
+    # slightly different folder (e.g. `test/` instead of `tests/`, or a
+    # root-level copy). Tries, in order:
+    #   1. the exact name as given
+    #   2. `tests/` <-> `test/` prefix swap
+    #   3. the bare basename at ROOT
+    # Returns [] (and the caller renders an empty section) if none exist.
+    import os as _os
+    cands = [name]
+    if name.startswith("tests/"):
+        cands.append("test/" + name[len("tests/"):])
+    elif name.startswith("test/"):
+        cands.append("tests/" + name[len("test/"):])
+    cands.append(_os.path.basename(name))
+    tried = []
+    for c in cands:
+        path = _os.path.join(ROOT, c)
+        tried.append(path)
+        if _os.path.exists(path):
+            break
+    else:
         return []
     out = []
     with open(path, encoding="utf-8") as fh:
