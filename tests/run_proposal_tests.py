@@ -157,9 +157,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--resume", action="store_true",
                     help="skip ids already present in results.jsonl")
+    ap.add_argument("--family", default=None,
+                    help="only run proposals in this task_family")
     args = ap.parse_args()
 
     props = [json.loads(l) for l in open(PROPS) if l.strip()]
+    if args.family:
+        props = [p for p in props if p.get("task_family") == args.family]
     prop_ids = {p["id"] for p in props}
     done = _done_ids() if args.resume else set()
 
@@ -202,7 +206,12 @@ def main():
     out_f.close()
 
     # ---- final validation ----
+    # When --family filters the run, validate only against the proposals that
+    # were actually targeted (not every row in results.jsonl), otherwise the
+    # global row count mismatches the filtered prop_ids set.
     rows = [json.loads(l) for l in open(OUT) if l.strip()]
+    if args.family:
+        rows = [r for r in rows if r.get("task_family") == args.family]
     seen = {}
     for r in rows:
         seen[r["id"]] = seen.get(r["id"], 0) + 1

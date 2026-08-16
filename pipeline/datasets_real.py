@@ -151,7 +151,11 @@ def _uci_har(n_train, n_val, batch):
 # AG-News (text 64, 4 classes)
 # ---------------------------------------------------------------------------
 def _tok(s, length, vocab=20000):
-    toks = [abs(hash(w) % vocab) + 1 for w in s.lower().split() if w.isalpha()]
+    # hash words into [0, vocab-1]; padding token is 0 (a valid embedding
+    # index). Must NOT add +1 here: the embedding is sized `vocab`, whose
+    # valid indices are 0..vocab-1, so `vocab` itself is out of range and
+    # raises "index out of range in self".
+    toks = [abs(hash(w) % vocab) for w in s.lower().split() if w.isalpha()]
     if len(toks) >= length:
         return torch.tensor(toks[:length], dtype=torch.long)
     return torch.tensor(toks + [0] * (length - len(toks)), dtype=torch.long)
