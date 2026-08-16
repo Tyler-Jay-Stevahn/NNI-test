@@ -209,7 +209,18 @@ def badge(status):
     return f'<span class="badge {status_color(status)}">{esc(status)}</span>'
 
 
-def proposals_table(records):
+def _test_status(p, real):
+    """Effective display status: the real-data test result status if a test
+    exists (tests/results.jsonl), else the proposal lifecycle status
+    (proposals.jsonl). This is what the Status column should show after a
+    proposal has been trained/validated, so the column updates on test."""
+    rl = (real or {}).get(p.get("id")) if real else None
+    if rl and rl.get("status"):
+        return rl["status"]
+    return p.get("status")
+
+
+def proposals_table(records, real=None):
     rows = []
     for p in records:
         pid = esc(p.get("id"))
@@ -222,7 +233,7 @@ def proposals_table(records):
             f"<td>{esc(p.get('task_family'))}</td>"
             f"<td>{esc(model)}</td>"
             f"<td>{esc(dataset)}</td>"
-            f"<td>{badge(p.get('status'))}</td>"
+            f"<td>{badge(_test_status(p, real))}</td>"
             f"<td>{badge(p.get('compile_status'))}</td>"
             f"</tr>"
         )
@@ -388,6 +399,7 @@ def page_index():
     mnist = [r for r in load_jsonl("tests/results.jsonl") if r.get("declared_dataset") == "mnist"]
 
     fams = sorted({p.get("task_family") for p in proposals})
+    real = index_by(load_jsonl("tests/results.jsonl"), "id")
     v_ok = sum(1 for v in verify if (v.get("status") or "").lower() == "ok")
     v_warn = sum(1 for v in verify if (v.get("status") or "").lower() == "warn")
     v_fail = sum(1 for v in verify if (v.get("status") or "").lower() == "fail")
@@ -398,10 +410,11 @@ def page_index():
         if f == "hpo-mnist":
             continue  # merged into the MNIST page
         fps = [p for p in proposals if p.get("task_family") == f]
+        # Lead status = first proposal's effective test status (ok if tested)
         fam_rows.append(
             f"<tr><td><a href='/family/{esc(f)}'>{esc(f)}</a></td>"
             f"<td>{len(fps)}</td>"
-            f"<td>{badge(fps[0].get('status'))}</td></tr>"
+            f"<td>{badge(_test_status(fps[0], real))}</td></tr>"
         )
 
     body = f"""
@@ -424,10 +437,11 @@ def page_index():
 
 def page_proposals(family=None):
     proposals = load_jsonl("proposals.jsonl")
+    real = index_by(load_jsonl("tests/results.jsonl"), "id")
     if family:
         proposals = [p for p in proposals if p.get("task_family") == family]
     title = f"Proposals{f' — {family}' if family else ''}"
-    body = f"<h2>{esc(title)}</h2>" + proposals_table(proposals)
+    body = f"<h2>{esc(title)}</h2>" + proposals_table(proposals, real)
     return title, body
 
 
@@ -439,6 +453,8 @@ def page_proposal(pid):
 
     verify = index_by(load_jsonl("proposals_verification.jsonl"), "id")
     smoke = index_by(load_jsonl("pipeline_smoke_results.jsonl"), "id")
+    real = index_by(load_jsonl("tests/results.jsonl"), "id")
+    rl = real.get(rec.get("id")) or {}
 
     spec = rec.get("spec", {}) or {}
     spec_lines = "".join(
@@ -495,7 +511,8 @@ def page_proposal(pid):
     <h2>{esc(rec.get('id'))}</h2>
     <div class="detail-grid">
       <div class="k">family</div><div>{esc(rec.get('task_family'))}</div>
-      <div class="k">status</div><div>{badge(rec.get('status'))}</div>
+      <div class="k">lifecycle</div><div>{badge(rec.get('status'))}</div>
+      <div class="k">test status</div><div>{badge(rl.get('status') or 'untested')}</div>
       <div class="k">compile</div><div>{badge(rec.get('compile_status'))}</div>
       <div class="k">created</div><div>{esc(rec.get('created'))}</div>
     </div>
@@ -929,7 +946,7 @@ def family_table(fps, smoke, real):
             f"<tr><td><a href='/proposal/{pid}'>{pid}</a></td>"
             f"<td>{esc(p.get('task_family'))}</td>"
             f"<td>{esc(ds)}</td>"
-            f"<td>{badge(p.get('status'))}</td>"
+            f"<td>{badge(_test_status(p, real))}</td>"
             f"<td>{esc(val_acc)}</td>"
             f"<td>{esc(params)}</td>"
             f"<td>{esc(train_loss)}</td>"
