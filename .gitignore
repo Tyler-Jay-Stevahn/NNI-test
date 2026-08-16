@@ -4,5 +4,4 @@
 data/
 __pycache__/
 *.pyc
-pipeline_smoke_results.jsonl
 *.log
