@@ -179,7 +179,8 @@ def main():
             print(f"[skip] {pid} (already done)", flush=True)
             continue
         spec = p.get("spec", {})
-        r = {"id": pid, "declared_dataset": spec.get("dataset")}
+        r = {"id": pid, "task_family": p.get("task_family"),
+             "declared_dataset": spec.get("dataset")}
         try:
             res = test_one(spec)            # steps 2+3
             r["status"] = "ok"
@@ -208,10 +209,11 @@ def main():
     # ---- final validation ----
     # When --family filters the run, validate only against the proposals that
     # were actually targeted (not every row in results.jsonl), otherwise the
-    # global row count mismatches the filtered prop_ids set.
+    # global row count mismatches the filtered prop_ids set. Result rows carry
+    # `id` (always) but not necessarily `task_family`, so filter by id.
     rows = [json.loads(l) for l in open(OUT) if l.strip()]
     if args.family:
-        rows = [r for r in rows if r.get("task_family") == args.family]
+        rows = [r for r in rows if r.get("id") in prop_ids]
     seen = {}
     for r in rows:
         seen[r["id"]] = seen.get(r["id"], 0) + 1
