@@ -47,6 +47,8 @@ DATASETS = {
     # --- new: clustering ---
     "mnist-cluster":    {"modality": "image", "shape": (1, 28, 28), "classes": 10},
     "openml-cluster":   {"modality": "tabular", "shape": (20,), "classes": 8},
+    # --- new: reinforcement learning (IMPALA-style CNN stem on Atari frames) ---
+    "atari-ale":        {"modality": "image", "shape": (4, 84, 84), "classes": 18},
 }
 
 _DEFAULT = {"modality": "image", "shape": (3, 16, 16), "classes": 10}
@@ -168,6 +170,98 @@ class CoordConv(nn.Module):
         return self.conv(torch.cat([x, coords], 1))
 
 
+class GroupNormAct(nn.Module):
+    """GroupNorm + SiLU (the standard U-Net / diffusion block activation)."""
+    def __init__(self, channels, groups=32):
+        super().__init__()
+        self.gn = nn.GroupNorm(groups, channels)
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        return self.act(self.gn(x))
+
+
+class ResBlock2d(nn.Module):
+    """Residual block used by the IMPALA RL stem: 3x3 conv + GroupNorm + ReLU
+    with a skip connection. Input and output channels match."""
+    def __init__(self, channels, kernel=3):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel, padding=kernel // 2)
+        self.conv2 = nn.Conv2d(channels, channels, kernel, padding=kernel // 2)
+        self.norm1 = nn.GroupNorm(1, channels)
+        self.norm2 = nn.GroupNorm(1, channels)
+        self.act = nn.ReLU()
+
+    def forward(self, x):
+        h = self.act(self.norm1(self.conv1(x)))
+        h = self.act(self.norm2(self.conv2(h)))
+        return x + h
+
+
+class Attention2d(nn.Module):
+    """Multi-head self-attention over spatial features (B, C, H, W)."""
+    def __init__(self, channels, heads=4):
+        super().__init__()
+        while channels % heads and heads > 1:
+            heads -= 1
+        self.att = nn.MultiheadAttention(channels, heads, batch_first=True)
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        s = x.flatten(2).transpose(1, 2)          # (B, H*W, C)
+        a, _ = self.att(s, s, s)
+        a = self.norm(s + a)
+        return a.transpose(1, 2).view(b, c, h, w)
+
+
+class Downsample2d(nn.Module):
+    """Spatial downsample via stride-2 conv (keeps channel count)."""
+    def __init__(self, channels):
+        super().__init__()
+        self.conv = nn.Conv2d(channels, channels, 3, stride=2, padding=1)
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class Upsample2d(nn.Module):
+    """Spatial upsample via nearest + stride-1 conv (keeps channel count)."""
+    def __init__(self, channels):
+        super().__init__()
+        self.conv = nn.Conv2d(channels, channels, 3, stride=1, padding=1)
+
+    def forward(self, x):
+        x = torch.nn.functional.interpolate(x, scale_factor=2, mode="nearest")
+        return self.conv(x)
+
+
+class ConvOut(nn.Module):
+    """Final diffusion head: 3x3 conv -> 1x1 conv to map to `out_ch` (RGB/features)."""
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.seq = nn.Sequential(
+            nn.Conv2d(in_ch, in_ch, 3, padding=1),
+            nn.GroupNorm(32, in_ch),
+            nn.SiLU(),
+            nn.Conv2d(in_ch, out_ch, 1),
+        )
+
+    def forward(self, x):
+        return self.seq(x)
+
+
+class ActorCriticHead(nn.Module):
+    """RL actor-critic head: outputs policy logits AND a scalar value estimate."""
+    def __init__(self, in_dim, n_actions):
+        super().__init__()
+        self.policy = nn.Linear(in_dim, n_actions)
+        self.value = nn.Linear(in_dim, 1)
+
+    def forward(self, x):
+        return {"logits": self.policy(x), "value": self.value(x).squeeze(-1)}
+
+
 def _exec_novel(definition: str) -> type:
     """Compile + exec a layer `definition` string; return the nn.Module class.
 
@@ -227,6 +321,18 @@ def _block(block: dict, in_ch: int):
         return nn.Conv2d(in_ch, out, block.get("kernel", 3), padding=1), out
     if t == "batchnorm2d":
         return nn.BatchNorm2d(in_ch), in_ch
+    if t == "groupnorm":
+        return GroupNormAct(in_ch, block.get("groups", 32)), in_ch
+    if t == "silu":
+        return nn.SiLU(), in_ch
+    if t == "attention":
+        return Attention2d(in_ch, block.get("heads", 4)), in_ch
+    if t == "downsample":
+        return Downsample2d(in_ch), in_ch
+    if t == "upsample":
+        return Upsample2d(in_ch), in_ch
+    if t == "residual":
+        return ResBlock2d(in_ch, block.get("kernel", 3)), in_ch
     if t == "relu":
         return nn.ReLU(), in_ch
     if t == "maxpool2d":
@@ -332,6 +438,17 @@ def _make_head(feat_out: torch.Tensor, spec: dict) -> nn.Module:
         return nn.Identity()
     if clustering:
         layers.append(ClusterHead(dim, int(spec.get("embed_dim", 32)), n_out))
+    elif spec.get("head") == "conv_out":
+        # diffusion output: map the 4-D feature maps directly to `n_out`
+        # channels (no global pool / flatten). Operates on (B, C, H, W).
+        return ConvOut(feat_out.shape[1], n_out)
+    elif spec.get("head") == "actor_critic":
+        # RL policy + value head on the conv-stem output (4-D). Pool+flatten,
+        # a 256-unit hidden, then policy logits + scalar value.
+        return nn.Sequential(
+            nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+            nn.Linear(feat_out.shape[1], 256), nn.ReLU(),
+            ActorCriticHead(256, n_out))
     else:
         layers.append(nn.Linear(dim, n_out))
     return nn.Sequential(*layers)
@@ -418,3 +535,47 @@ def build_model(spec: dict) -> nn.Module:
     feat.train()
     head = _make_head(f, spec)
     return nn.Sequential(*blocks, head)
+
+
+# ---------------------------------------------------------------------------
+# Faithful canonical LeNet-5 (LeCun et al., 1998) -- reference baseline.
+# 32x32 single-channel input, tanh activations throughout, and the sparse C3
+# connection table from the paper (each C3 feature map is a 5x5 conv over a
+# SUBSET of the 6 S2 maps, then concatenated). This reproduces the seminal
+# MNIST result (~99% test acc); it is NOT the modernized `lenet5` fast-path
+# used by Tlenet-mnist-M01 (which uses ReLU + padding + AvgPool + no C3 table).
+# Used by tests/lenet_bench.py.
+# ---------------------------------------------------------------------------
+_LENET5_C3_TABLE = [
+    [0, 1, 2], [1, 2, 3], [2, 3, 4], [3, 4, 5], [4, 5, 0], [5, 0, 1],
+    [0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 0], [4, 5, 0, 1], [5, 0, 1, 2],
+    [0, 1, 3, 4], [1, 2, 4, 5], [2, 3, 5, 0], [0, 1, 2, 3, 4, 5],
+]
+
+
+class _C3(nn.Module):
+    """Sparse C3: 16 feature maps, each a 5x5 conv over a subset of S2 maps."""
+
+    def __init__(self):
+        super().__init__()
+        self.branches = nn.ModuleList(
+            [nn.Conv2d(len(s), 1, 5) for s in _LENET5_C3_TABLE]
+        )
+
+    def forward(self, x):
+        outs = [b(x[:, s, :, :]) for b, s in zip(self.branches, _LENET5_C3_TABLE)]
+        return torch.cat(outs, 1)
+
+
+def build_lenet5_canon(num_classes=10):
+    """Canonical LeNet-5. Expects a 32x32 single-channel tensor (B,1,32,32)."""
+    return nn.Sequential(
+        nn.Conv2d(1, 6, 5), nn.Tanh(),        # C1: 28x28x6
+        nn.AvgPool2d(2, 2),                    # S2: 14x14x6
+        _C3(), nn.Tanh(),                      # C3: 10x10x16 (sparse)
+        nn.AvgPool2d(2, 2),                    # S4: 5x5x16
+        nn.Conv2d(16, 120, 5), nn.Tanh(),      # C5: 1x1x120
+        nn.Flatten(),                          # 120
+        nn.Linear(120, 84), nn.Tanh(),         # F6: 84
+        nn.Linear(84, num_classes),            # OUTPUT: n_classes
+    )

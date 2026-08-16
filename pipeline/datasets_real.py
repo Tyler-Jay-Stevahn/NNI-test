@@ -15,7 +15,7 @@ Sources:
   esc50                              -> ESC-50 github zip (real WAV -> 1x8000 wave)
   speech-commands                    -> FSDD github zip (real WAV -> 1x64x64 mel)
   imagenet-subset, openml-ctr23,
-  openml-cluster                     -> LOCAL generated stand-ins (no reachable
+  openml-cluster, atari-ale           -> LOCAL generated stand-ins (no reachable
                                        external source in this environment);
                                        real-shaped + labeled, clearly marked.
 """
@@ -350,9 +350,15 @@ def get_loaders(dataset, task_type=None, n_classes=None, n_train=600, n_val=200,
     if ds in ("imagenet-subset",):
         return _local_standin(ds, (3, 16, 16), n_classes or 10, n_train, n_val, batch)
     if ds == "openml-ctr23":
-        return _local_standin(ds, (3, 16, 16), n_classes or 2, n_train, n_val, batch)
+        # tabular dataset: match build_model.DATASETS["openml-ctr23"]["shape"]=(20,)
+        return _local_standin(ds, (20,), n_classes or 2, n_train, n_val, batch)
     if ds == "openml-cluster":
         return _local_standin(ds, (20,), n_classes or 8, n_train, n_val, batch)
+    if ds == "atari-ale":
+        # Local generated stand-in: no reachable Atari ROM mirror in this env.
+        # Real-shaped (4x84x84 stacked frames) + class-correlated signal so the
+        # IMPALA CNN stem can compile and learn above chance. Marked stand-in.
+        return _local_standin(ds, (4, 84, 84), n_classes or 18, n_train, n_val, batch)
     raise ValueError(f"no real loader for dataset {ds!r}")
 
 

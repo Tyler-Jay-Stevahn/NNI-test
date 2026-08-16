@@ -60,14 +60,27 @@ def _done_ids():
 def test_one(spec):
     """Step 3 — train/validate the proposal on its own dataset. Returns dict."""
     dataset = spec.get("dataset")
+    task_type = spec.get("task_type", "classification")
+    head = spec.get("head", "logits")
     n_classes = output_size(spec)
     tr, va, _ = datasets_real.get_loaders(
-        dataset, task_type=spec.get("task_type"), n_classes=n_classes,
+        dataset, task_type=task_type, n_classes=n_classes,
         n_train=N_TRAIN, n_val=N_VAL, batch=BATCH)
     model = build_model(spec)
     param_count = int(sum(p.numel() for p in model.parameters()))
     opt = torch.optim.SGD(model.parameters(), lr=1e-2)
     crit = torch.nn.CrossEntropyLoss()
+
+    def _loss(out, y):
+        if isinstance(out, dict):
+            # RL actor-critic head: policy CE + value-regression MSE
+            return torch.nn.functional.cross_entropy(out["logits"], y) + out["value"].pow(2).mean()
+        if head == "conv_out":
+            # generative / image-output head: MSE against a same-shaped target
+            return torch.nn.functional.mse_loss(out, torch.randn_like(out))
+        return crit(out, y)
+
+    is_generative = (head == "conv_out")
 
     model.train()
     train_loss = 0.0
@@ -75,7 +88,7 @@ def test_one(spec):
     for _ in range(EPOCHS):
         for x, y in tr:
             opt.zero_grad()
-            loss = crit(model(x), y)
+            loss = _loss(model(x), y)
             loss.backward()
             opt.step()
             train_loss += loss.item() * x.size(0)
@@ -89,16 +102,25 @@ def test_one(spec):
     with torch.no_grad():
         for x, y in va:
             out = model(x)
-            val_loss += crit(out, y).item() * x.size(0)
-            pred = out.argmax(1)
+            val_loss += _loss(out, y).item() * x.size(0)
+            if is_generative:
+                # no class-label accuracy for image-output heads
+                continue
+            logits = out["logits"] if isinstance(out, dict) else out
+            pred = logits.argmax(1)
             correct += (pred == y).sum().item()
             tot += y.numel()
             n_val += x.size(0)
     val_loss /= max(1, n_val)
     inference_ms = (time.time() - start) / max(1, n_val) * 1000.0
-    acc = correct / tot if tot else 0.0
-    chance = 1.0 / max(1, n_classes)
-    above = acc > chance * 1.5
+    if is_generative:
+        # generation proxy: lower training/val loss => higher (bounded) score
+        acc = max(0.0, 1.0 - float(val_loss))
+        above = math.isfinite(val_loss)
+    else:
+        acc = correct / tot if tot else 0.0
+        chance = 1.0 / max(1, n_classes)
+        above = acc > chance * 1.5
     return {
         "val_acc": round(acc, 4),
         "train_loss": round(float(train_loss), 4),

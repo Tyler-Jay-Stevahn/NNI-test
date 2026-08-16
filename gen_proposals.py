@@ -333,6 +333,91 @@ TASK_FAMILIES = {
         ],
         "head": "cluster_assignment",
     },
+    "diffusion-cifar": {
+        "model": "ddpm_unet",
+        "dataset": "cifar10",
+        "modality": "image",
+        "task_type": "generation",
+        "blocks": [
+            {"type": "conv", "channels": 128, "kernel": 3, "stride": 1},
+            {"type": "groupnorm", "groups": 32},
+            {"type": "silu"},
+            {"type": "attention", "heads": 4},
+            {"type": "downsample", "channels": 128},
+            {"type": "conv", "channels": 256, "kernel": 3, "stride": 1},
+            {"type": "groupnorm", "groups": 32},
+            {"type": "silu"},
+            {"type": "attention", "heads": 4},
+            {"type": "downsample", "channels": 256},
+            {"type": "conv", "channels": 256, "kernel": 3, "stride": 1},
+            {"type": "groupnorm", "groups": 32},
+            {"type": "silu"},
+            {"type": "upsample", "channels": 256},
+            {"type": "conv", "channels": 128, "kernel": 3, "stride": 1},
+            {"type": "groupnorm", "groups": 32},
+            {"type": "silu"},
+            {"type": "attention", "heads": 4},
+            {"type": "upsample", "channels": 128},
+            {"type": "conv", "channels": 128, "kernel": 3, "stride": 1},
+            {"type": "groupnorm", "groups": 32},
+            {"type": "silu"},
+        ],
+        "head": "conv_out",
+        "optimizer": "adamw",
+        "lr_grid": [0.0001, 0.0002, 0.0005],
+        "weight_decay_grid": [1e-4],
+        "batch_size": 128,
+        "epochs": 200,
+        "augmentation": "none",
+        "diffusion": {
+            "timesteps": 1000,
+            "beta_schedule": "cosine",
+            "prediction_type": "epsilon",
+        },
+    },
+    "rl-atari-ppo": {
+        "model": "impala_cnn",
+        "dataset": "atari-ale",
+        "modality": "image",
+        "task_type": "rl_policy",
+        "blocks": [
+            {"type": "conv", "channels": 16, "kernel": 3, "stride": 1},
+            {"type": "relu"},
+            {"type": "residual", "channels": 16, "kernel": 3},
+            {"type": "relu"},
+            {"type": "residual", "channels": 16, "kernel": 3},
+            {"type": "relu"},
+            {"type": "conv", "channels": 32, "kernel": 3, "stride": 2},
+            {"type": "relu"},
+            {"type": "residual", "channels": 32, "kernel": 3},
+            {"type": "relu"},
+            {"type": "residual", "channels": 32, "kernel": 3},
+            {"type": "relu"},
+            {"type": "conv", "channels": 32, "kernel": 3, "stride": 2},
+            {"type": "relu"},
+            {"type": "residual", "channels": 32, "kernel": 3},
+            {"type": "relu"},
+            {"type": "residual", "channels": 32, "kernel": 3},
+            {"type": "relu"},
+        ],
+        "head": "actor_critic",
+        "optimizer": "adam",
+        "lr_grid": [0.0001, 0.00025, 0.0005],
+        "weight_decay_grid": [1e-4],
+        "batch_size": 256,
+        "epochs": 0,
+        "augmentation": "none",
+        "rl": {
+            "algorithm": "ppo",
+            "num_envs": 64,
+            "rollout_length": 128,
+            "ppo_epochs": 4,
+            "clip_range": 0.1,
+            "entropy_coef": 0.01,
+            "value_coef": 0.5,
+            "max_grad_norm": 0.5,
+        },
+    },
 }
 
 # Why each family's model was proposed. Plain Simplified Technical English.
@@ -422,6 +507,20 @@ RATIONALE = {
         "The tabular counterpart of the DEC family. A dense encoder plus a "
         "centroid head tests clustering on feature vectors, so the pipeline is "
         "proved on unsupervised objectives in two modalities."
+    ),
+    "diffusion-cifar": (
+        "Denoising diffusion probabilistic model (DDPM) on CIFAR-10 tests the "
+        "generation task type. The U-Net with attention at multiple resolutions "
+        "is the standard diffusion backbone; cosine noise schedule and epsilon "
+        "prediction are the established defaults. It adds a GENERATIVE "
+        "objective to the sweep and exercises the diffusion config block."
+    ),
+    "rl-atari-ppo": (
+        "IMPALA-style CNN with residual blocks for PPO on Atari (ALE) tests the "
+        "RL policy task type. The actor-critic head outputs both action logits "
+        "and a value estimate. The conv+residual stem is the standard Impala "
+        "architecture used in large-scale distributed RL. It adds a "
+        "REINFORCEMENT LEARNING objective and the rl config block."
     ),
 }
 
@@ -652,6 +751,34 @@ CITATIONS = {
         {"title": "OpenML",
          "url": "https://www.openml.org/",
          "why": "The tabular data source for the cluster features."},
+    ],
+    "diffusion-cifar": [
+        {"title": "Ho et al. (2020) Denoising Diffusion Probabilistic Models (DDPM)",
+         "url": "https://arxiv.org/abs/2006.11239",
+         "why": "The DDPM framework; epsilon prediction and cosine schedule."},
+        {"title": "Nichol & Dhariwal (2021) Improved Denoising Diffusion Probabilistic Models",
+         "url": "https://arxiv.org/abs/2102.09672",
+         "why": "Cosine noise schedule and improved U-Net design for diffusion."},
+        {"title": "Dhariwal & Nichol (2021) Diffusion Models Beat GANs on Image Synthesis",
+         "url": "https://arxiv.org/abs/2105.05233",
+         "why": "Attention in U-Net at multiple resolutions; classifier-free guidance."},
+        {"title": "Krizhevsky (2009) CIFAR-10 dataset",
+         "url": "https://www.cs.toronto.edu/~kriz/cifar.html",
+         "why": "The dataset used for the diffusion benchmark."},
+    ],
+    "rl-atari-ppo": [
+        {"title": "Espeholt et al. (2018) IMPALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures",
+         "url": "https://arxiv.org/abs/1802.01561",
+         "why": "The IMPALA CNN architecture with residual blocks used here."},
+        {"title": "Schulman et al. (2017) Proximal Policy Optimization Algorithms (PPO)",
+         "url": "https://arxiv.org/abs/1707.06347",
+         "why": "The PPO algorithm with clipped surrogate objective."},
+        {"title": "Bellemare et al. (2013) The Arcade Learning Environment (ALE)",
+         "url": "https://arxiv.org/abs/1207.4708",
+         "why": "The Atari benchmark suite used by this family."},
+        {"title": "Mnih et al. (2015) Human-level control through deep reinforcement learning",
+         "url": "https://www.nature.com/articles/nature14236",
+         "why": "Original DQN on Atari; context for the RL policy task."},
     ],
 }
 

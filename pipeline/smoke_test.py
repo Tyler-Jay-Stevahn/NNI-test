@@ -53,8 +53,21 @@ def smoke_test(proposal: dict) -> dict:
         # TRAIN step (one micro-batch) — proves backward compiles
         model.train()
         out = model(x)
-        report["out_shape"] = list(out.shape)
-        loss = crit(out, y)
+        # some heads (e.g. RL actor-critic) return a dict of tensors
+        if isinstance(out, dict):
+            logits = out.get("logits")
+            value = out.get("value")
+            # compile-only surrogate: mean cross-entropy + value MSE
+            loss = torch.nn.functional.cross_entropy(logits, y) + value.pow(2).mean()
+            report["out_shape"] = list(logits.shape)
+        elif spec.get("head") == "conv_out":
+            # generative / image-output head: MSE against a same-shaped target
+            loss = torch.nn.functional.mse_loss(out, torch.randn_like(out))
+            report["out_shape"] = list(out.shape)
+        else:
+            logits = out
+            loss = crit(out, y)
+            report["out_shape"] = list(out.shape)
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -67,11 +80,13 @@ def smoke_test(proposal: dict) -> dict:
         model.eval()
         with torch.no_grad():
             t_out = model(x)
-        report["test_out_shape"] = list(t_out.shape)
+        report["test_out_shape"] = list(t_out["logits"].shape) if isinstance(t_out, dict) else list(t_out.shape)
 
         # PREDICT step — argmax class
         with torch.no_grad():
-            pred = torch.argmax(model(x[:1]), dim=1)
+            pred_out = model(x[:1])
+            pred_logits = pred_out["logits"] if isinstance(pred_out, dict) else pred_out
+            pred = torch.argmax(pred_logits, dim=1)
         report["predict"] = pred.tolist()
 
         report["status"] = "ok"
